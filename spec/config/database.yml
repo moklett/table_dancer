@@ -1,0 +1,4 @@
+adapter: mysql
+database: table_dancer_test
+user: root
+password: 
