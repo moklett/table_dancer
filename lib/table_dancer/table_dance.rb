@@ -1,6 +1,7 @@
 module TableDancer
   class TableDance < ActiveRecord::Base
     include DummyClasses
+    include Speech
     
     validates_presence_of :source_table
     validate :source_table_exists
@@ -19,78 +20,79 @@ module TableDancer
     def self.run!(table_name)
       dance = setup(table_name)
       dance.init!
+      sleep TableDancer.rest_interval
       dance.copy!
+      sleep TableDancer.rest_interval
       dance.replay!
       dance.cutover!
     end
     
     def init!
+      verify_phase!('init')
+      announce_phase
       within_table_lock do
-        self.last_copy_id = find_last_copy_id
+        record_last_copy_id
         install_triggers
-        self.phase = 'copy'
-        save!
+        advance_phase
       end
       self
     end
     
     def copy!
-      raise(StandardError, "Cannot copy when not in copy phase") if phase != 'copy'
-      
-      source_class.find_each do |original|
-        self.replays.create(
-          :instruction => 1,
-          :event_time => original.respond_to?(:created_at) ? original.created_at : self.created_at,
-          :source_id => original.id
-        )
-      end
-      
-      update_attribute(:phase, 'replay')
+      verify_phase!('copy')
+      announce_phase
+      copy_all_pre_trigger_records_to_replays
+      advance_phase
       self
     end
     
     def replay!
-      ActiveRecord::Base.logger.debug "Begin replay!"
-      
-      raise(StandardError, "Cannot replay when not in replay phase") if phase != 'replay'
-      
-      replay(20) # Replay down to only 20 max outstanding records
-      update_attribute(:phase, 'cutover')
+      verify_phase!('replay')
+      announce_phase
+      replay(:down_to => TableDancer.replay_iteration_threshold) # Replay down to only N max outstanding records
+      advance_phase
       self
     end
     
     def cutover!
-      raise(StandardError, "Cannot cutover when not in cutover phase") if phase != 'cutover'
-
-      replay(10) # Replay down to only 10 max outstanding records
+      verify_phase!('cutover')
+      announce_phase
+      replay(:down_to => TableDancer.replay_iteration_threshold) # Replay down to only N max outstanding records
       within_table_lock do
-        replay(0)
+        replay(:down_to => 0)
+        say "Renaming tables"
         transaction do
           execute("ALTER TABLE `#{source_table}` RENAME TO `#{decommissioned_table}`")
           execute("ALTER TABLE `#{dest_table}` RENAME TO `#{source_table}`")
         end
-        update_attribute(:phase, 'complete')
+        say "Rename complete"
+        advance_phase
         self
       end
+    end
+    
+    def copy_columns
+      @copy_columns ||= source_class.column_names & dest_class.column_names
     end
       
     private
 
-    def replay(target_size = 0)
-      while batch = next_unperformed_batch
-        batch.each do |replay|
-          replay.perform!(source_table, dest_table, shared_columns)
-        end
-        break if batch.size <= target_size
-      end
+    def announce_phase
+      log "=========== BEGINNING #{phase.upcase} PHASE ================"
+      say "Beginning #{phase} phase"
+    end
+    
+    def verify_phase!(target_phase)
+      raise(StandardError, "Cannot #{target_phase} when not in #{target_phase} phase") if phase != target_phase
+    end
+
+    def replay(options = {})
+      options = {:down_to => 0}.merge!(options)
+      TableDanceReplay.replay_each(self, options)
     end
     
     def shared_columns
       source_class.column_names & dest_class.column_names
-    end
-    
-    def next_unperformed_batch
-      replays.unperformed.all(:limit => 1000)
     end
     
     def replay_table
@@ -126,24 +128,28 @@ module TableDancer
       begin
         lock_tables
         yield
+      rescue => e
+        raise e
       ensure
         unlock_tables
       end
     end
     
     def execute(sql)
-      self.class.connection.execute(sql)
+      connection.execute(sql)
     end
     
     # A validation
     def source_table_exists
-      if !ActiveRecord::Base.connection.table_exists?(source_table)
+      if !connection.table_exists?(source_table)
         self.errors.add(:source_table, "does not exist")
       end
     end
     
     def find_last_copy_id
-      source_class.first(:order => "id DESC").try(:id)
+      record = source_class.first(:order => "id DESC")
+      id = record ? record.id : 0
+      id
     end
     
     def delete_triggers
@@ -178,6 +184,37 @@ module TableDancer
 
     def replay_values(instruction)
       "#{self.id}, #{instruction['id']}, CURRENT_TIMESTAMP, #{instruction['table_ref']}.id"
+    end
+    
+    def record_last_copy_id
+      self.last_copy_id = find_last_copy_id
+      save
+    end
+    
+    def advance_phase
+      say "Completed #{phase} phase"
+      phases = ['init', 'copy', 'replay', 'cutover', 'complete']
+      next_phase_index = phases.index(phase)+1
+      self.phase = phases[next_phase_index]
+      save
+    end
+    
+    def copy_all_pre_trigger_records_to_replays
+      count = source_class.count(:conditions => "#{source_table}.id <= #{last_copy_id}")
+      say "There are #{source_class.count} records to copy to the replays table"
+      index = 1
+      say "Beginning copy..."
+      source_class.find_each(:conditions => "#{source_table}.id <= #{last_copy_id}") do |original|
+        resay "Copying #{index} of #{count}"
+        self.replays.create(
+          :instruction => 1,
+          :event_time => original.respond_to?(:created_at) ? original.created_at : self.created_at,
+          :source_id => original.id,
+          :performed => false
+        )
+        index = index+1
+      end
+      say "\nCompleted copy."
     end
   end
 end

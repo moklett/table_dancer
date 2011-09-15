@@ -1,11 +1,17 @@
-Hold me closer, table dancer
+Hold Me Closer, Table Dancer
 ============================
 
-    rails g table_dancer:migration
-    # Creates a migration that creates the table_dances and table_dance_replays tables
-    
-    TableDance.start!('account_transaction')
-    #
+Run all the steps at once:
+
+    TableDancer.run!('account_transaction')
+
+Or run them individually:
+
+    dance = TableDancer.setup('account_transaction')
+    dance.init!
+    dance.copy!
+    dance.replay!
+    dance.cutover!
     
 Phases
 ------
@@ -35,7 +41,6 @@ Phases
   * Release write lock
 
 
-    
 Table Dancer Schema
 -------------------
 

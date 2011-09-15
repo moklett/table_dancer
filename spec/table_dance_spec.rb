@@ -44,7 +44,6 @@ module TableDancer
     
     it "locks and unlocks the source table" do
       dance.should_receive(:lock_tables)
-      dance.should_receive(:save!)
       dance.should_receive(:unlock_tables)
       dance.init!
     end
@@ -91,9 +90,10 @@ module TableDancer
     before do
       # Create 3 existing rows
       3.times { dance.source_class.create }
+      dance.init!
     end
     
-    let(:dance) { TableDance.setup('foos').init! }
+    let(:dance) { TableDance.setup('foos') }
     
     it "raises an error if not in 'copy' phase" do
       dance.update_attribute(:phase, 'init')
@@ -101,6 +101,11 @@ module TableDancer
     end
     
     it "creates an 'insert' replay entry for each existing row" do
+      lambda { dance.copy! }.should change { dance.replays.inserts.count }.by(3)
+    end
+    
+    it "does not create an 'insert' replay for entries after the last copy id" do
+      dance.source_class.create # Create another
       lambda { dance.copy! }.should change { dance.replays.inserts.count }.by(3)
     end
     
@@ -118,19 +123,21 @@ module TableDancer
 
   describe TableDance, "#replay!" do
     let(:dance) do
+      TableDancer.log "--------- Setting up test -----------"
       d = TableDance.setup('foos')
       d.send(:delete_triggers)
 
-      # Start with 2 records
-      2.times { d.source_class.create! }
+      # Start with 3 records
+      3.times { d.source_class.create! }
       
       d.init!
       
-      # Modify one of the recores and delete the other
+      # Modify one of the records and delete another
       d.source_class.first.update_attributes!(:title => "changed!") # Replay 1
       d.source_class.last.destroy                                   # Replay 2
       
-      d.copy!                                                       # Replay 3
+      d.copy!                                                       # Replay 3 and 4
+      TableDancer.log "--------- Test setup complete -----------"
       d
     end
     
@@ -146,20 +153,35 @@ module TableDancer
       replays[0]['source_id'].should == 1
       replays[0]['instruction'].should == Instructions::INSERT['id']
       
-      replays[1]['id'].should == 1
-      replays[1]['source_id'].should == 1
-      replays[1]['instruction'].should == Instructions::UPDATE['id']
+      replays[1]['id'].should == 4
+      replays[1]['source_id'].should == 2
+      replays[1]['instruction'].should == Instructions::INSERT['id']
       
-      replays[2]['id'].should == 2
-      replays[2]['source_id'].should == 2
-      replays[2]['instruction'].should == Instructions::DELETE['id']
+      replays[2]['id'].should == 1
+      replays[2]['source_id'].should == 1
+      replays[2]['instruction'].should == Instructions::UPDATE['id']
+      
+      replays[3]['id'].should == 2
+      replays[3]['source_id'].should == 3
+      replays[3]['instruction'].should == Instructions::DELETE['id']
     end
     
     it "replays each unperformed instruction" do
-      dance.replays.unperformed.count.should == 3
+      dance.replays.unperformed.count.should == 4
       dance.replay!
       dance.reload
       dance.replays.unperformed.count.should == 0
+    end
+    
+    it "creates copies of all records" do
+      dance.replay!
+      dance.dest_class.count.should == 2
+
+      # Compare on all attributes
+      expected = dance.source_class.all(:order => 'id').map {|r| r.attributes}
+      actual   = dance.dest_class.all(:order => 'id').map {|r| r.attributes}
+      
+      actual.should == expected
     end
     
     it "moves the phase to 'cutover'" do
@@ -176,12 +198,15 @@ module TableDancer
   
   describe TableDance, "#cutover!" do
     before do
-      init_table('foos')
-      init_table('foos_danced')
+      setup_foo_tables
       connection.drop_table('foos_decommissioned') if connection.table_exists?('foos_decommissioned')
+      dance
+      dance.init!
+      dance.copy!
+      dance.replay!
     end
     
-    let(:dance) { d = TableDance.setup('foos').init!.copy!.replay! }
+    let(:dance) { d = TableDance.setup('foos') }
 
     it "raises an error if not in 'cutover' phase" do
       dance.update_attribute(:phase, 'init')
