@@ -27,7 +27,15 @@ module TableDancer
 
       # Start table dance...
       thread1 = Thread.new do
-        TableDancer::TableDance.run!(table_name)
+        dance = TableDancer.setup(table_name)
+        sleep 1
+        dance.init!
+        sleep 1
+        dance.copy!
+        sleep 1
+        dance.replay!
+        sleep 1
+        dance.cutover!
       end
 
       # While continuing to insert new rows
@@ -54,7 +62,15 @@ module TableDancer
     it "faithfully reproduces a table that is accepting live inserts, updates, and deletes" do
       # Start table dance...
       thread1 = Thread.new do
-        TableDancer::TableDance.run!(table_name)
+        dance = TableDancer.setup(table_name)
+        sleep 1
+        dance.init!
+        sleep 1
+        dance.copy!
+        sleep 1
+        dance.replay!
+        sleep 1
+        dance.cutover!
       end
 
       # While continuing to insert, update, and delete rows
@@ -150,7 +166,7 @@ module TableDancer
             randomly_delete_row
           end
         end
-        sleep 1
+        sleep 0.5
       end
     end
   end

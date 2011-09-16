@@ -123,7 +123,6 @@ module TableDancer
 
   describe TableDance, "#replay!" do
     let(:dance) do
-      TableDancer.log "--------- Setting up test -----------"
       d = TableDance.setup('foos')
       d.send(:delete_triggers)
 
@@ -137,7 +136,6 @@ module TableDancer
       d.source_class.last.destroy                                   # Replay 2
       
       d.copy!                                                       # Replay 3 and 4
-      TableDancer.log "--------- Test setup complete -----------"
       d
     end
     
