@@ -125,8 +125,8 @@ module TableDancer
     end
     
     def lock_tables
-      execute('SET autocommit=0;')
       table_locks = [source_table, dest_table, self.class.table_name].map {|t| "`#{t}` WRITE"}.join(', ')
+      execute('SET autocommit=0;')
       execute("LOCK TABLES #{table_locks};")
     end
     
