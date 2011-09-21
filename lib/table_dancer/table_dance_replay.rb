@@ -15,7 +15,7 @@ module TableDancer
     
     named_scope :unperformed, :conditions => {:performed => false}
     named_scope :for_dance, lambda { |dance_or_id| {:conditions => {:table_dance_id => dance_or_id.to_param.to_i}} }
-    named_scope :batched, lambda { {:limit => TableDancer.batch_size, :order => "instruction ASC, event_time ASC"} }
+    named_scope :batched, lambda { {:limit => TableDancer.batch_size, :order => "event_time ASC"} }
     
     def self.replay_each(dance, options = {})
       options = {:down_to => 0}.merge!(options)
