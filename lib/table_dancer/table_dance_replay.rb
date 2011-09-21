@@ -15,7 +15,8 @@ module TableDancer
     
     named_scope :unperformed, :conditions => {:performed => false}
     named_scope :for_dance, lambda { |dance_or_id| {:conditions => {:table_dance_id => dance_or_id.to_param.to_i}} }
-    named_scope :batched, lambda { {:limit => TableDancer.batch_size, :order => "event_time ASC"} }
+    named_scope :ordered_for_replay, :order => "event_time ASC, instruction ASC"
+    named_scope :batched, lambda { {:limit => TableDancer.batch_size} }
     
     def self.replay_each(dance, options = {})
       options = {:down_to => 0}.merge!(options)
@@ -63,7 +64,7 @@ module TableDancer
     private
     
     def self.next_unperformed_batch(dance)
-      for_dance(dance).unperformed.batched.all
+      for_dance(dance).unperformed.batched.ordered_for_replay.all
     end
     
     def self.reset_bulk_receptors(dance)

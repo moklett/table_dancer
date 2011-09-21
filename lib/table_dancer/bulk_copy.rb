@@ -41,7 +41,7 @@ module TableDancer
     end
     
     def id_list
-      "#{record_ids.join(',')}"
+      "#{record_ids.uniq.join(',')}"
     end
     
     def execute(sql)

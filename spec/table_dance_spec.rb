@@ -144,8 +144,8 @@ module TableDancer
       lambda { dance.replay! }.should raise_error(StandardError, 'Cannot replay when not in replay phase')
     end
 
-    it "orders the replays by instruction type then the original event time" do
-      replays = dance.replays
+    it "orders the replays by original event time then the instruction when ordered_for_replay" do
+      replays = dance.replays.ordered_for_replay
 
       replays[0]['id'].should == 3
       replays[0]['source_id'].should == 1
