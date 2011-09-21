@@ -5,8 +5,6 @@ module TableDancer
     
     belongs_to :dance, :class_name => 'TableDancer::TableDance', :foreign_key => :table_dance_id
     
-    default_scope :order => "instruction ASC, event_time ASC"
-    
     delegate :source_table, :to => :dance
     delegate :dest_table, :to => :dance
     delegate :copy_columns, :to => :dance
@@ -17,7 +15,7 @@ module TableDancer
     
     named_scope :unperformed, :conditions => {:performed => false}
     named_scope :for_dance, lambda { |dance_or_id| {:conditions => {:table_dance_id => dance_or_id.to_param.to_i}} }
-    named_scope :batched, lambda { {:limit => TableDancer.batch_size} }
+    named_scope :batched, lambda { {:limit => TableDancer.batch_size, :order => "instruction ASC, event_time ASC"} }
     
     def self.replay_each(dance, options = {})
       options = {:down_to => 0}.merge!(options)
