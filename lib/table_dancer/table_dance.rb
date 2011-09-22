@@ -39,7 +39,9 @@ module TableDancer
     def copy!
       verify_phase!('copy')
       announce_phase
+      # TODO: Drop indexes
       copy_all_pre_trigger_records_to_dest_table
+      # TODO: Recreate indexes
       advance_phase
       self
     end
@@ -276,9 +278,8 @@ module TableDancer
     def load_data_from_outfiles
       say "Loading data from outfiles..."
       @outfiles.each do |file|
-        command = %Q{#{mysql} --local-infile -e "LOAD DATA LOCAL INFILE '#{file}' INTO TABLE #{dest_table} } +
-                  %Q{(#{copy_columns.join(',')})" }
-        say command, 1
+        command = %Q{#{mysql} --local-infile -e "set foreign_key_checks=0; set sql_log_bin=0; set unique_checks=0; LOAD DATA LOCAL INFILE '#{file}' INTO TABLE #{dest_table} (#{copy_columns.join(',')});"}
+        say "Reading #{file}", 1
         system(command)
         sleep TableDancer.rest_interval
       end
@@ -287,9 +288,9 @@ module TableDancer
     
     def remove_outfiles
       say "Removing outfiles..."
-      @outfiles.each do |file|
-        FileUtils.rm(file)
-      end
+      # @outfiles.each do |file|
+      #   FileUtils.rm(file)
+      # end
       say "Done"
     end
     
