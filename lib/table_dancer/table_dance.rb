@@ -30,7 +30,7 @@ module TableDancer
       announce_phase
       within_table_lock do
         record_last_copy_id
-        install_triggers
+        # install_triggers
         advance_phase
       end
       self
@@ -294,7 +294,7 @@ module TableDancer
     end
     
     def mysql
-      user = TableDancer.database_config['user']
+      user = TableDancer.database_config['username']
       host = TableDancer.database_config['host']
       port = TableDancer.database_config['port']
       pass = TableDancer.database_config['password']
@@ -305,7 +305,7 @@ module TableDancer
       options << "-u #{user}" if user
       options << "-h #{host}" if host
       options << "--port #{port}" if port
-      options << "-p #{pass}" if pass
+      options << "-p#{pass}" if pass
       options << "-D #{db}" if db
       
       "mysql #{options.join(' ')}"
