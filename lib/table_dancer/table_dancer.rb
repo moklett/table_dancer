@@ -6,6 +6,8 @@ module TableDancer
   mattr_writer   :database_config
   mattr_reader   :log_file
   mattr_writer   :batch_size
+  mattr_writer   :outfile_record_limit
+  mattr_writer   :outfile_dir
   
   def self.run!(table_name)
     TableDancer::TableDance.run!(table_name)
@@ -40,6 +42,14 @@ module TableDancer
   
   def self.batch_size
     (@@batch_size || 1000).to_i
+  end
+  
+  def self.outfile_record_limit
+    (@@outfile_record_limit || 100000).to_i
+  end
+  
+  def self.outfile_dir
+    @@outfile_dir || File.join(ENV['HOME'], 'tmp')
   end
   
   private

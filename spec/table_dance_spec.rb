@@ -100,13 +100,18 @@ module TableDancer
       lambda { dance.copy! }.should raise_error(StandardError, 'Cannot copy when not in copy phase')
     end
     
-    it "creates an 'insert' replay entry for each existing row" do
-      lambda { dance.copy! }.should change { dance.replays.inserts.count }.by(3)
+    it "creates rows in the destination table to match the source table" do
+      lambda { dance.copy! }.should change { dance.dest_class.count }.by(3)
+      dance.source_class.find_each do |src|
+        dest = dance.dest_class.find(src.id)
+        src.attributes.should == dest.attributes
+      end
     end
     
-    it "does not create an 'insert' replay for entries after the last copy id" do
+    it "does not copy rows after the last copy id" do
       dance.source_class.create # Create another
-      lambda { dance.copy! }.should change { dance.replays.inserts.count }.by(3)
+      lambda { dance.copy! }.should change { dance.dest_class.count }.by(3)
+      dance.dest_class.find_by_id(dance.source_class.last.id).should be_nil
     end
     
     it "moves the phase to 'replay'" do
@@ -131,11 +136,10 @@ module TableDancer
       
       d.init!
       
-      # Modify one of the records and delete another
       d.source_class.first.update_attributes!(:title => "changed!") # Replay 1
       d.source_class.last.destroy                                   # Replay 2
       
-      d.copy!                                                       # Replay 3 and 4
+      d.copy!
       d
     end
     
@@ -147,25 +151,17 @@ module TableDancer
     it "orders the replays by original event time then the instruction when ordered_for_replay" do
       replays = dance.replays.ordered_for_replay
 
-      replays[0]['id'].should == 3
+      replays[0]['id'].should == 1
       replays[0]['source_id'].should == 1
-      replays[0]['instruction'].should == Instructions::INSERT['id']
+      replays[0]['instruction'].should == Instructions::UPDATE['id']
       
-      replays[1]['id'].should == 4
-      replays[1]['source_id'].should == 2
-      replays[1]['instruction'].should == Instructions::INSERT['id']
-      
-      replays[2]['id'].should == 1
-      replays[2]['source_id'].should == 1
-      replays[2]['instruction'].should == Instructions::UPDATE['id']
-      
-      replays[3]['id'].should == 2
-      replays[3]['source_id'].should == 3
-      replays[3]['instruction'].should == Instructions::DELETE['id']
+      replays[1]['id'].should == 2
+      replays[1]['source_id'].should == 3
+      replays[1]['instruction'].should == Instructions::DELETE['id']
     end
     
     it "replays each unperformed instruction" do
-      dance.replays.unperformed.count.should == 4
+      dance.replays.unperformed.count.should == 2
       dance.replay!
       dance.reload
       dance.replays.unperformed.count.should == 0

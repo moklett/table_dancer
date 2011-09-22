@@ -1,5 +1,6 @@
 require 'active_record'
 require 'md5'
+require 'fileutils'
 require 'table_dancer/table_dancer'
 require 'table_dancer/dummy_classes'
 require 'table_dancer/instructions'

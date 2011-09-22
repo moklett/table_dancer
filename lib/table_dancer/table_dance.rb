@@ -39,7 +39,7 @@ module TableDancer
     def copy!
       verify_phase!('copy')
       announce_phase
-      copy_all_pre_trigger_records_to_replays
+      copy_all_pre_trigger_records_to_dest_table
       advance_phase
       self
     end
@@ -78,7 +78,7 @@ module TableDancer
       c1 = table_checksum(source_table)
       say "Checksum for #{source_table} is #{c1}"
       c2 = table_checksum("#{source_table}_decommissioned")
-      say "Checksum for #{source_table} is #{c1}"
+      say "Checksum for #{dest_table} is #{c2}"
       if c1 == c2
         say "Checksums match! :)"
         return true
@@ -104,10 +104,6 @@ module TableDancer
       TableDanceReplay.replay_each(self, options)
     end
     
-    def shared_columns
-      source_class.column_names & dest_class.column_names
-    end
-    
     def replay_table
       'table_dance_replays'
     end
@@ -125,7 +121,7 @@ module TableDancer
     end
     
     def lock_tables
-      table_locks = [source_table, dest_table, self.class.table_name].map {|t| "`#{t}` WRITE"}.join(', ')
+      table_locks = [source_table, dest_table, self.class.table_name, self.replays.table_name].map {|t| "`#{t}` WRITE"}.join(', ')
       execute('SET autocommit=0;')
       execute("LOCK TABLES #{table_locks};")
     end
@@ -214,42 +210,109 @@ module TableDancer
       save
     end
     
-    def copy_all_pre_trigger_records_to_replays
+    def copy_all_pre_trigger_records_to_dest_table
       count = source_class.count(:conditions => "#{source_table}.id <= #{last_copy_id}")
-      say "There are #{count} records to copy to the replays table", 1
+      say "There are #{count} records to copy to the destination table", 1
 
-      batch_num = 1
-      index = 1
-      
-      source_class.find_in_batches(:conditions => "#{source_table}.id <= #{last_copy_id}", :batch_size => TableDancer.batch_size) do |batch|
-        bulk_insert = BulkInsert.new(connection, TableDanceReplay.table_name, TableDanceReplay.column_names)
-        
-        batch_size = batch.size
-        batch.each do |original|
-          resay "Copying #{index} of #{count}", 2
-          # This is a temporary object
-          replay = TableDanceReplay.new(
-            :table_dance_id => self.id,
-            :instruction => 1,
-            :event_time => original.respond_to?(:created_at) ? original.created_at : self.created_at,
-            :source_id => original.id,
-            :performed => false
-          )
-          # Get values in the same order as the column names on the bulk inserter
-          value_set = bulk_insert.columns.map {|c| replay.send(c)}
-          # Release temporary object
-          bulk_insert.push_values(value_set)
-          index = index+1
-        end
-        
-        resay "Copying #{index} of #{count} (Bulk insert on batch #{batch_num})", 2
-        bulk_insert.perform
-
-        batch_num = batch_num+1
-
-        sleep TableDancer.rest_interval if batch_size == TableDancer.batch_size
+      begin
+        create_outfiles
+        select_into_outfiles
+        load_data_from_outfiles
+      ensure
+        remove_outfiles
       end
-      say "\n"
+    end
+    
+    def create_outfiles
+      if TableDancer.outfile_dir.blank?
+        raise StandardError, "TableDancer.outfile_dir must be specified"
+      end
+      
+      run_id = Time.now.to_i
+
+      num_files = (last_copy_id.to_i / TableDancer.outfile_record_limit) + 1
+      
+      start_id = 0
+
+      @outfiles = []
+      
+      while start_id < last_copy_id
+        filename = File.join(TableDancer.outfile_dir, outfile_name(run_id, start_id))
+        FileUtils.touch(filename)
+        start_id = start_id + TableDancer.outfile_record_limit
+        @outfiles << filename
+      end
+    end
+    
+    # Dropping to command line for now
+    def select_into_outfiles
+      say "Selecting data into outfiles..."
+      
+      start_id = 0
+      batch = 0
+      
+      while start_id < last_copy_id
+        filename = @outfiles[batch]
+        max_id = [start_id+TableDancer.outfile_record_limit, last_copy_id].min
+        
+        nc = '\\\\N'
+        sedcmd = %{sed -e 's/^NULL$/#{nc}/g' | sed -e 's/^NULL\t/#{nc}\t/g' | sed -e 's/\tNULL$/\t#{nc}/g' | sed -e 's/\tNULL\t/\t#{nc}\t/g' | sed -e 's/\tNULL\t/\t#{nc}\t/g'}
+
+        command = %Q{#{mysql} --skip-column-names -e "SELECT #{copy_columns.join(',')} FROM #{source_table} } +
+                  %Q{WHERE id > #{start_id} AND id <= #{max_id} ORDER BY id" } +
+                  %Q{| #{sedcmd} } +
+                  %Q{> #{filename}}
+        say "Writing #{@outfiles[batch]}", 1
+        system(command)
+
+        batch = batch+1
+        start_id = start_id + TableDancer.outfile_record_limit
+        sleep TableDancer.rest_interval
+      end
+      
+      say "Done"
+    end
+    
+    def load_data_from_outfiles
+      say "Loading data from outfiles..."
+      @outfiles.each do |file|
+        command = %Q{#{mysql} --local-infile -e "LOAD DATA LOCAL INFILE '#{file}' INTO TABLE #{dest_table} } +
+                  %Q{(#{copy_columns.join(',')})" }
+        say command, 1
+        system(command)
+        sleep TableDancer.rest_interval
+      end
+      say "Done"
+    end
+    
+    def remove_outfiles
+      say "Removing outfiles..."
+      @outfiles.each do |file|
+        FileUtils.rm(file)
+      end
+      say "Done"
+    end
+    
+    def mysql
+      user = TableDancer.database_config['user']
+      host = TableDancer.database_config['host']
+      port = TableDancer.database_config['port']
+      pass = TableDancer.database_config['password']
+      db   = TableDancer.database_config['database']
+      
+      options = []
+      
+      options << "-u #{user}" if user
+      options << "-h #{host}" if host
+      options << "--port #{port}" if port
+      options << "-p #{pass}" if pass
+      options << "-D #{db}" if db
+      
+      "mysql #{options.join(' ')}"
+    end
+    
+    def outfile_name(run_id, start_id)
+      "#{source_table}_#{run_id}_#{start_id}.txt"
     end
     
     def table_checksum(table_name, max_id = 0)
