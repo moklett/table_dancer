@@ -11,10 +11,14 @@ module TableDancer
     
     has_many :replays, :class_name => "TableDancer::TableDanceReplay"
     
-    def self.setup(table_name)
-      TableDance.create(
+    attr_writer :options
+    
+    def self.setup(table_name, options = {})
+      d = TableDance.create(
         :source_table => table_name
       )
+      d.options = options
+      d
     end
     
     def self.run!(table_name)
@@ -30,7 +34,7 @@ module TableDancer
       announce_phase
       within_table_lock do
         record_last_copy_id
-        # install_triggers
+        install_triggers if install_triggers?
         advance_phase
       end
       self
@@ -89,7 +93,11 @@ module TableDancer
         return false
       end
     end
-      
+
+    def options
+      @options || {}
+    end
+    
     private
 
     def announce_phase
@@ -326,6 +334,10 @@ module TableDancer
         checksum = MD5.hexdigest("#{checksum}#{row.attributes}")
       end
       checksum
+    end
+    
+    def install_triggers?
+      options[:install_triggers]
     end
   end
 end

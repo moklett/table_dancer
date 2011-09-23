@@ -57,12 +57,23 @@ module TableDancer
       dance.last_copy_id.should == num
     end
     
-    it "installs the triggers" do
+    it "does not install triggers by default" do
+      dance.should_not_receive(:install_triggers)
+      dance.init!
+      
+      result = connection.execute("SHOW TRIGGERS;")
+      result.num_rows.should == 0
+      result.free
+    end
+    
+    it "installs the triggers if options[:install_triggers] is true" do
+      dance.options = {:install_triggers => true}
       dance.should_receive(:install_triggers)
       dance.init!
     end
     
-    it "installs the correct triggers" do
+    it "installs the correct triggers if options[:install_triggers] is true" do
+      dance.options = {:install_triggers => true}
       dance.init!
       result = connection.execute("SHOW TRIGGERS;")
       hashes = result.all_hashes
@@ -128,7 +139,7 @@ module TableDancer
 
   describe TableDance, "#replay!" do
     let(:dance) do
-      d = TableDance.setup('foos')
+      d = TableDance.setup('foos', :install_triggers => true)
       d.send(:delete_triggers)
 
       # Start with 3 records
