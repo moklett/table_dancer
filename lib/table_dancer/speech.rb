@@ -17,7 +17,9 @@ module TableDancer
 
       def say(msg, indent = 0)
         if verbose?
-          puts msg_with_indention(msg_with_time(msg),indent)
+          full_message = msg_with_indention(msg_with_time(msg),indent)
+          puts full_message
+          log full_message
         end
       end
 
