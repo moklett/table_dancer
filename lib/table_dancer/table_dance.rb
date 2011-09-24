@@ -219,7 +219,6 @@ module TableDancer
     end
     
     def copy_all_pre_trigger_records_to_dest_table
-      count = source_class.count(:conditions => "#{source_table}.id <= #{last_copy_id}")
       say "Copying records to destination table", 1
 
       select_into_outfiles
@@ -265,7 +264,7 @@ module TableDancer
         abort_if_lockfile_exists(file)
         write_lockfile(file)
 
-        command = %Q{#{mysql} --local-infile -e "set foreign_key_checks=0; set sql_log_bin=0; set unique_checks=0; LOAD DATA LOCAL INFILE '#{file}' INTO TABLE #{dest_table} (#{copy_columns.join(',')});"}
+        command = %Q{#{mysql} --local-infile -e "set foreign_key_checks=0; set unique_checks=0; LOAD DATA LOCAL INFILE '#{file}' INTO TABLE #{dest_table} (#{copy_columns.join(',')});"}
         say "Reading #{file}", 1
         system(command)
         say "Reading complete. Removing #{file}", 1
