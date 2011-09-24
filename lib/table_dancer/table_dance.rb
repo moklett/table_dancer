@@ -43,9 +43,7 @@ module TableDancer
     def copy!
       verify_phase!('copy')
       announce_phase
-      # TODO: Drop indexes
       copy_all_pre_trigger_records_to_dest_table
-      # TODO: Recreate indexes
       advance_phase
       self
     end
@@ -84,7 +82,7 @@ module TableDancer
       c1 = table_checksum(source_table)
       say "Checksum for #{source_table} is #{c1}"
       c2 = table_checksum("#{source_table}_decommissioned")
-      say "Checksum for #{dest_table} is #{c2}"
+      say "Checksum for decommissioned table is #{c2}"
       if c1 == c2
         say "Checksums match! :)"
         return true
@@ -222,47 +220,26 @@ module TableDancer
     
     def copy_all_pre_trigger_records_to_dest_table
       count = source_class.count(:conditions => "#{source_table}.id <= #{last_copy_id}")
-      say "There are #{count} records to copy to the destination table", 1
+      say "Copying records to destination table", 1
 
-      begin
-        create_outfiles
-        select_into_outfiles
-        load_data_from_outfiles
-      ensure
-        remove_outfiles
-      end
-    end
-    
-    def create_outfiles
-      if TableDancer.outfile_dir.blank?
-        raise StandardError, "TableDancer.outfile_dir must be specified"
-      end
-      
-      run_id = Time.now.to_i
-
-      num_files = (last_copy_id.to_i / TableDancer.outfile_record_limit) + 1
-      
-      start_id = 0
-
-      @outfiles = []
-      
-      while start_id < last_copy_id
-        filename = File.join(TableDancer.outfile_dir, outfile_name(run_id, start_id))
-        FileUtils.touch(filename)
-        start_id = start_id + TableDancer.outfile_record_limit
-        @outfiles << filename
-      end
+      select_into_outfiles
+      load_data_from_outfiles
     end
     
     # Dropping to command line for now
     def select_into_outfiles
+      return if runid_given?
+      
       say "Selecting data into outfiles..."
       
       start_id = 0
       batch = 0
       
       while start_id < last_copy_id
-        filename = @outfiles[batch]
+        batch = batch+1
+        
+        filename = outfile_name(batch)
+
         max_id = [start_id+TableDancer.outfile_record_limit, last_copy_id].min
         
         nc = '\\\\N'
@@ -272,12 +249,11 @@ module TableDancer
                   %Q{WHERE id > #{start_id} AND id <= #{max_id} ORDER BY id" } +
                   %Q{| #{sedcmd} } +
                   %Q{> #{filename}}
-        say "Writing #{@outfiles[batch]}", 1
+        say "Writing #{filename}", 1
         system(command)
 
-        batch = batch+1
         start_id = start_id + TableDancer.outfile_record_limit
-        sleep TableDancer.rest_interval
+        sleep TableDancer.outfile_rest_interval
       end
       
       say "Done"
@@ -285,20 +261,18 @@ module TableDancer
     
     def load_data_from_outfiles
       say "Loading data from outfiles..."
-      @outfiles.each do |file|
+      outfiles.each do |file|
+        abort_if_lockfile_exists(file)
+        write_lockfile(file)
+
         command = %Q{#{mysql} --local-infile -e "set foreign_key_checks=0; set sql_log_bin=0; set unique_checks=0; LOAD DATA LOCAL INFILE '#{file}' INTO TABLE #{dest_table} (#{copy_columns.join(',')});"}
         say "Reading #{file}", 1
         system(command)
-        sleep TableDancer.rest_interval
+        say "Reading complete. Removing #{file}", 1
+
+        File.unlink(file)
+        sleep TableDancer.infile_rest_interval
       end
-      say "Done"
-    end
-    
-    def remove_outfiles
-      say "Removing outfiles..."
-      # @outfiles.each do |file|
-      #   FileUtils.rm(file)
-      # end
       say "Done"
     end
     
@@ -320,8 +294,39 @@ module TableDancer
       "mysql #{options.join(' ')}"
     end
     
-    def outfile_name(run_id, start_id)
-      "#{source_table}_#{run_id}_#{start_id}.txt"
+    def outfile_name(batch)
+      File.join(outfile_dir, "#{source_table}_#{'%06d' % batch.to_i}.txt")
+    end
+    
+    def outfile_dir
+      FileUtils.mkdir_p(File.join(TableDancer.outfile_dir, runid.to_s))
+    end
+    
+    def runid
+      return @runid if defined?(@runid)
+      @runid = options[:runid] || Time.now.to_i
+    end
+    
+    def outfiles
+      Dir.glob(File.join(outfile_dir, "#{source_table}_*.txt")).sort
+    end
+    
+    def abort_if_lockfile_exists(outfile)
+      lockfile = lockfile_name_for(outfile)
+      if File.exist?(lockfile)
+        raise StandardError, "File locked! #{lockfile}: #{File.read(lockfile)}"
+      end
+    end
+    
+    def write_lockfile(outfile)
+      lockfile = lockfile_name_for(outfile)
+      File.open(lockfile, "w") do |file|
+        file.write "host:#{Socket.gethostname} pid:#{Process.pid}"
+      end
+    end
+    
+    def lockfile_name_for(outfile)
+      outfile.gsub(/\.txt$/, ".lock")
     end
     
     def table_checksum(table_name, max_id = 0)
@@ -331,13 +336,17 @@ module TableDancer
       end
       checksum = ''
       dummy_class_for(table_name).find_each(:conditions => conditions) do |row|
-        checksum = MD5.hexdigest("#{checksum}#{row.attributes}")
+        checksum = MD5.hexdigest("#{checksum}#{row.attributes.select{|k,v| copy_columns.include?(k) }}")
       end
       checksum
     end
     
     def install_triggers?
-      options[:install_triggers]
+      options[:install_triggers].nil? || options[:install_triggers]
+    end
+    
+    def runid_given?
+      not options[:runid].nil?
     end
   end
 end

@@ -57,13 +57,15 @@ module TableDancer
       dance.last_copy_id.should == num
     end
     
-    it "does not install triggers by default" do
+    it "installs triggers by default" do
+      dance.should_receive(:install_triggers)
+      dance.init!
+    end
+    
+    it "does not install triggers if options[:install_triggers] is false" do
+      dance.options = {:install_triggers => false}
       dance.should_not_receive(:install_triggers)
       dance.init!
-      
-      result = connection.execute("SHOW TRIGGERS;")
-      result.num_rows.should == 0
-      result.free
     end
     
     it "installs the triggers if options[:install_triggers] is true" do

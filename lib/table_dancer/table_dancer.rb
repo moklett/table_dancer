@@ -1,6 +1,8 @@
 module TableDancer
   mattr_accessor :verbose
   mattr_writer   :rest_interval
+  mattr_writer   :outfile_rest_interval
+  mattr_writer   :infile_rest_interval
   mattr_writer   :replay_iteration_threshold
   mattr_accessor :database_config_file
   mattr_writer   :database_config
@@ -19,6 +21,14 @@ module TableDancer
   
   def self.rest_interval
     @@rest_interval.to_i
+  end
+  
+  def self.outfile_rest_interval
+    @@outfile_rest_interval || rest_interval
+  end
+  
+  def self.infile_rest_interval
+    @@infile_rest_interval || rest_interval
   end
   
   def self.replay_iteration_threshold
